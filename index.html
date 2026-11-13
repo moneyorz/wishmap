@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>待去地圖</title>
+  <meta name="theme-color" content="#0f766e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="待去地圖">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="filters" class="filters">
+    <select id="f-cat" aria-label="分類">
+      <option value="all">全部分類</option>
+      <option value="spot">景點</option>
+      <option value="food">美食</option>
+    </select>
+    <select id="f-status" aria-label="狀態">
+      <option value="all">全部狀態</option>
+      <option value="todo">還沒去</option>
+      <option value="done">已去過</option>
+    </select>
+    <select id="f-region" aria-label="地區">
+      <option value="all">全部地區</option>
+    </select>
+  </div>
+
+  <main>
+    <section id="view-map" class="view active">
+      <div id="map"></div>
+      <button id="btn-locate" class="fab" type="button" aria-label="我的位置">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+      </button>
+      <div id="map-hint" class="hint">長按地圖可手動新增地點</div>
+    </section>
+
+    <section id="view-list" class="view">
+      <div id="list-info" class="list-info"></div>
+      <div id="list"></div>
+    </section>
+
+    <section id="view-add" class="view">
+      <header class="hero">
+        <h1>想去哪裡？</h1>
+        <p>輸入景點或店名，選出正確的那一個</p>
+        <form id="search-form" class="search-form">
+          <input id="search-input" type="search" placeholder="例如：東京鐵塔" autocomplete="off" enterkeyhint="search" required>
+          <button id="search-btn" type="submit" class="btn primary">搜尋</button>
+        </form>
+      </header>
+      <div class="body">
+      <p class="muted small">名稱後面加上城市會更準，例如「一蘭拉麵 京都」。也可以直接貼上座標（例如 25.0339, 121.5645）。</p>
+      <div id="search-status" class="muted"></div>
+      <div id="search-results"></div>
+      <div id="search-extra" class="card" hidden>
+        <h2>找不到或不確定是哪一個？</h2>
+        <p class="muted small">先到 Google Maps 確認地點，長按該地點複製座標，再貼回上面的搜尋框。</p>
+        <a id="btn-google" class="btn wide" target="_blank" rel="noopener" href="#">在 Google Maps 找這個名稱</a>
+        <button id="btn-manual" type="button" class="btn ghost wide">到地圖上長按手動新增</button>
+      </div>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <header class="hero">
+        <h1>我的清單</h1>
+        <p id="stats"></p>
+      </header>
+      <div class="body">
+      <div class="card">
+        <h2>備份</h2>
+        <p class="muted small">清單只存在這支手機裡。清除瀏覽器資料或換手機會遺失，建議定期匯出備份檔。</p>
+        <button id="btn-export" type="button" class="btn primary wide">匯出備份檔</button>
+        <label class="btn ghost wide file-btn">
+          匯入備份檔
+          <input id="file-import" type="file" accept="application/json,.json" hidden>
+        </label>
+      </div>
+      <div class="card">
+        <h2>安裝到主畫面</h2>
+        <p class="muted small"><b>iPhone：</b>用 Safari 開啟 → 分享按鈕 → 加入主畫面。</p>
+        <p class="muted small"><b>Android：</b>用 Chrome 開啟 → 右上角選單 → 加到主畫面／安裝應用程式。</p>
+      </div>
+      <p class="muted small">地圖與搜尋資料 © OpenStreetMap 貢獻者。導航、街景與評論會開啟 Google Maps。</p>
+      </div>
+    </section>
+  </main>
+
+  <nav id="tabs" class="tabs">
+    <button type="button" data-view="map" class="active">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>
+      <span>地圖</span>
+    </button>
+    <button type="button" data-view="list">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      <span>清單</span>
+    </button>
+    <button type="button" data-view="add">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+      <span>新增</span>
+    </button>
+    <button type="button" data-view="settings">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+      <span>備份</span>
+    </button>
+  </nav>
+
+  <div id="sheet" class="sheet" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
