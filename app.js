@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '4';
+  const APP_VERSION = '5';
   const KEY = 'wishmap.places.v1';
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -51,6 +51,10 @@
       city: String(p.city ?? ''),
       note: String(p.note ?? ''),
       recommendedBy: String(p.recommendedBy ?? ''),
+      // gquery：從 Google Maps 貼來的完整地址，導航與評論用它比用座標準
+      gquery: String(p.gquery ?? ''),
+      // approx：圖釘只定位到路段或行政區，不是精確門牌
+      approx: Boolean(p.approx),
       myRating: Math.min(5, Math.max(0, Math.round(Number(p.myRating) || 0))),
       visited: Boolean(p.visited),
       createdAt: Number(p.createdAt) || Date.now(),
@@ -100,11 +104,12 @@
   const googleSearchUrl = (q) =>
     `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
   const navUrl = (p) =>
-    `https://www.google.com/maps/dir/?api=1&destination=${coord(p)}`;
+    `https://www.google.com/maps/dir/?api=1&destination=${p.gquery ? encodeURIComponent(p.gquery) : coord(p)}`;
   const streetUrl = (p) =>
     `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${coord(p)}`;
-  const reviewUrl = (p) =>
-    googleSearchUrl([p.name, p.city, p.country].filter(Boolean).join(' ').trim() || coord(p));
+  const reviewUrl = (p) => googleSearchUrl(
+    (p.gquery ? [p.name, p.gquery] : [p.name, p.city, p.country]).filter(Boolean).join(' ').trim() || coord(p)
+  );
 
   let toastTimer;
   function toast(msg) {
@@ -287,7 +292,8 @@
         <input type="text" id="s-name" value="${esc(p.name)}" placeholder="幫這個地點取名字" aria-label="名稱">
         <button type="button" class="close" data-act="close" aria-label="關閉">${ico('close', 18)}</button>
       </div>
-      <p class="addr">${ico('pin', 14)}<span><span id="s-addr">${esc(p.address || `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`)}</span>${dist}</span></p>
+      <p class="addr">${ico('pin', 14)}<span><span id="s-addr">${esc(p.gquery || p.address || `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`)}</span>${dist}</span></p>
+      ${p.approx ? `<p class="note">圖釘是大約位置${isNew ? '，可以拖曳圖釘調整' : ''}。導航和評論會用完整地址，不受影響。</p>` : ''}
       <div class="actions">
         <a class="btn primary" target="_blank" rel="noopener" href="${navUrl(p)}">${ico('nav')}導航</a>
         <a class="btn" target="_blank" rel="noopener" href="${streetUrl(p)}">${ico('street')}看街景</a>
@@ -346,7 +352,13 @@
   function startDraft(place) {
     showView('map');
     if (draftMarker) draftMarker.remove();
-    draftMarker = L.marker([place.lat, place.lng], { icon: pinIcon('draft'), zIndexOffset: 1000 }).addTo(map);
+    draftMarker = L.marker([place.lat, place.lng], { icon: pinIcon('draft'), zIndexOffset: 1000, draggable: true })
+      .on('dragend', (e) => {
+        const ll = e.target.getLatLng();
+        place.lat = ll.lat;
+        place.lng = ll.lng;
+      })
+      .addTo(map);
     openSheet(place, true);
   }
 
@@ -569,6 +581,52 @@
     return list;
   }
 
+  // ---------- 地址（從 Google Maps 複製的完整地址） ----------
+  const isAddressLike = (q) =>
+    /[\d０-９]/.test(q) && /[路街巷弄號]|丁目|番地?|[都道府県].+[市区町村]|,/.test(q);
+
+  function cleanAddress(s) {
+    return s
+      .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .replace(/[−－‐―]/g, '-')
+      .replace(/〒\s*\d{3}-?\d{4}\s*/, '')
+      .replace(/^\s*\d{3,6}\s*(?=\D)/, '')
+      .replace(/^(台灣|臺灣|日本)[\s,、]*/, '')
+      .trim();
+  }
+
+  // 免費搜尋服務認不得連在一起的中文／日文門牌地址，
+  // 所以拆成由細到粗的幾種寫法，依序嘗試
+  function addressCandidates(q) {
+    const a = cleanAddress(q);
+    const list = [];
+    let m = a.match(/^(.+?[都道府県])(.+?[市区町村郡])([^\d]*)(\d+)?/);
+    if (m && /丁目|\d+-\d+|番/.test(a)) {
+      const [, pref, muni, town, n] = m;
+      if (town && n) list.push({ q: `${pref}${muni}${town}${n}丁目`, label: `${town}${n}丁目` });
+      if (town) list.push({ q: `${pref}${muni}${town}`, label: town });
+      list.push({ q: `${pref}${muni}`, label: muni });
+      return list;
+    }
+    m = a.match(/^(.{2,}?[縣市])(.+?[區鄉鎮市])?(.+?(?:大道|路|街)(?:[一二三四五六七八九十\d]+段)?)(.*)$/);
+    if (m) {
+      const [, city, dist = '', road, rest] = m;
+      const lane = (rest.match(/\d+巷/) || [''])[0];
+      if (lane) list.push({ q: `${road}${lane} ${dist} ${city}`, label: `${road}${lane}` });
+      list.push({ q: `${road} ${dist} ${city}`, label: road });
+      if (dist) list.push({ q: `${dist} ${city}`, label: dist });
+    }
+    return list;
+  }
+
+  async function addressFallback(q) {
+    for (const cand of addressCandidates(q)) {
+      const hits = await nominatim(`search?format=jsonv2&addressdetails=1&limit=1&q=${encodeURIComponent(cand.q)}`);
+      if (hits.length) return { hit: hits[0], label: cand.label };
+    }
+    return null;
+  }
+
   let lastSearchAt = 0;
   let lastNameQuery = '';
   let results = [];
@@ -641,7 +699,10 @@
 
     btn.disabled = true;
     status.textContent = '搜尋中…';
-    lastNameQuery = q;
+    // 貼地址時，名稱沿用上一次搜尋的店名，不要被地址蓋掉
+    const addr = isAddressLike(q);
+    const prevName = lastNameQuery;
+    if (!addr) lastNameQuery = q;
     try {
       // 免費搜尋服務規定每秒最多一次
       const wait = 1100 - (Date.now() - lastSearchAt);
@@ -653,8 +714,35 @@
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       results = data.map((r) => ({ place: placeFromResult(r), type: r.type })).filter((r) => r.place);
+      if (addr) {
+        for (const r of results) {
+          r.place.gquery = q;
+          if (prevName) r.place.name = prevName;
+        }
+        if (!results.length) {
+          status.textContent = '正在用地址定位…';
+          const fb = await addressFallback(q);
+          if (fb) {
+            const a = fb.hit.address || {};
+            const place = normalize({
+              name: prevName,
+              lat: fb.hit.lat,
+              lng: fb.hit.lon,
+              address: fb.hit.display_name,
+              country: a.country,
+              city: cityOf(a),
+              gquery: q,
+              approx: true,
+            }, true);
+            if (place) results = [{ place, type: '', approx: true, near: fb.label }];
+          }
+        }
+      }
       if (!results.length) {
         status.textContent = '找不到符合的地點。可以加上城市名稱再試，或用下面的方式新增。';
+      } else if (results[0].approx) {
+        status.textContent = `已定位到「${results[0].near}」附近。導航會用完整地址，仍然準確。點下面繼續：`;
+        showPlaceResults();
       } else {
         status.textContent = `找到 ${results.length} 個結果，請選擇你要的那一個：`;
         showPlaceResults();
@@ -680,8 +768,9 @@
       <button type="button" class="result" data-i="${i}">
         <span class="badge ${r.place.category}">${ico(r.place.category, 24)}</span>
         <span class="result-main">
-          <b>${esc(r.place.name)}${TYPE_LABEL[r.type] ? `<span class="tag">${TYPE_LABEL[r.type]}</span>` : ''}</b>
-          <span class="muted small">${esc(r.place.address)}</span>
+          <b>${esc(r.place.name || r.place.gquery)}${r.approx ? '<span class="tag">大約位置</span>'
+            : TYPE_LABEL[r.type] ? `<span class="tag">${TYPE_LABEL[r.type]}</span>` : ''}</b>
+          <span class="muted small">${esc(r.place.gquery || r.place.address)}</span>
         </span>
         <span class="chev">${ico('chev', 18)}</span>
       </button>`).join('');
@@ -769,6 +858,10 @@
   function pickResult(r) {
     const place = { ...r.place, id: newId() };
     startDraft(place);
+    if (place.gquery) {
+      lastNameQuery = '';
+      $('#search-input').value = '';
+    }
     if (r.fromCode) {
       // Plus Code 只有位置，地址和國家城市要另外查
       lastNameQuery = '';
