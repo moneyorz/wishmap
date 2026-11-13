@@ -575,6 +575,7 @@
     e.preventDefault();
     const q = $('#search-input').value.trim();
     if (!q) return;
+    cancelSuggest();
     const btn = $('#search-btn');
     const status = $('#search-status');
     const extra = $('#search-extra');
@@ -655,15 +656,7 @@
         status.textContent = '找不到符合的地點。可以加上城市名稱再試，或用下面的方式新增。';
       } else {
         status.textContent = `找到 ${results.length} 個結果，請選擇你要的那一個：`;
-        $('#search-results').innerHTML = results.map((r, i) => `
-          <button type="button" class="result" data-i="${i}">
-            <span class="badge ${r.place.category}">${ico(r.place.category, 24)}</span>
-            <span class="result-main">
-              <b>${esc(r.place.name)}${TYPE_LABEL[r.type] ? `<span class="tag">${TYPE_LABEL[r.type]}</span>` : ''}</b>
-              <span class="muted small">${esc(r.place.address)}</span>
-            </span>
-            <span class="chev">${ico('chev', 18)}</span>
-          </button>`).join('');
+        showPlaceResults();
       }
     } catch {
       status.textContent = '搜尋失敗，請確認網路連線後再試一次。';
@@ -680,6 +673,96 @@
     const r = results[Number(btn.dataset.i)];
     if (r) pickResult(r);
   });
+
+  function showPlaceResults() {
+    $('#search-results').innerHTML = results.map((r, i) => `
+      <button type="button" class="result" data-i="${i}">
+        <span class="badge ${r.place.category}">${ico(r.place.category, 24)}</span>
+        <span class="result-main">
+          <b>${esc(r.place.name)}${TYPE_LABEL[r.type] ? `<span class="tag">${TYPE_LABEL[r.type]}</span>` : ''}</b>
+          <span class="muted small">${esc(r.place.address)}</span>
+        </span>
+        <span class="chev">${ico('chev', 18)}</span>
+      </button>`).join('');
+  }
+
+  // ---------- 邊打邊出現的建議 ----------
+  let suggestTimer = 0;
+  let suggestCtl = null;
+
+  function cancelSuggest() {
+    clearTimeout(suggestTimer);
+    if (suggestCtl) suggestCtl.abort();
+    suggestCtl = null;
+  }
+
+  function placeFromPhoton(f) {
+    const p = f.properties || {};
+    const c = (f.geometry && f.geometry.coordinates) || [];
+    const parts = [p.name, [p.street, p.housenumber].filter(Boolean).join(' '),
+      p.district, p.city, p.county, p.state, p.country].filter(Boolean);
+    return normalize({
+      name: p.name,
+      lat: c[1],
+      lng: c[0],
+      address: [...new Set(parts)].join(', '),
+      country: p.country,
+      city: p.city || p.county || p.state,
+      category: FOOD_TYPES.has(p.osm_value) ? 'food' : 'spot',
+    });
+  }
+
+  async function suggest(q) {
+    const ctl = new AbortController();
+    suggestCtl = ctl;
+    // 以地圖目前所在的區域（約 10 公里精度）優先排序，附近的結果排前面
+    const c = map.getCenter();
+    try {
+      const res = await fetch('https://photon.komoot.io/api/?limit=20' +
+        `&lat=${c.lat.toFixed(1)}&lon=${c.lng.toFixed(1)}&q=${encodeURIComponent(q)}`, { signal: ctl.signal });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (ctl.signal.aborted || $('#search-input').value.trim() !== q) return;
+      const seen = new Set();
+      const list = [];
+      for (const f of data.features || []) {
+        const p = f.properties || {};
+        // 道路、站牌這類不是想去的地點，略過
+        if (p.osm_key === 'highway' || p.osm_value === 'stop' || p.osm_value === 'platform') continue;
+        const place = placeFromPhoton(f);
+        if (!place) continue;
+        const key = `${place.name}|${place.city}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ place, type: p.osm_value });
+        if (list.length === 8) break;
+      }
+      if (!list.length) return;
+      results = list;
+      $('#search-status').textContent = '建議的地點（沒有你要的就按「搜尋」找更多）：';
+      $('#search-extra').hidden = true;
+      showPlaceResults();
+    } catch {
+      // 建議只是輔助，失敗就不顯示，使用者仍可按「搜尋」
+    }
+  }
+
+  function onSearchTyping(e) {
+    // 注音／拼音還在選字時先不查，等選完字再查
+    if (e.isComposing) return;
+    cancelSuggest();
+    const q = $('#search-input').value.trim();
+    // 空白、座標、網址、Plus Code 不需要建議，並清掉上一次的建議
+    if (!q || parsePlusCode(q) || parsePasted(q) || /^[\d\s.,+-]+$/.test(q)) {
+      $('#search-results').innerHTML = '';
+      $('#search-status').textContent = '';
+      $('#search-extra').hidden = true;
+      return;
+    }
+    suggestTimer = setTimeout(() => suggest(q), 350);
+  }
+  $('#search-input').addEventListener('input', onSearchTyping);
+  $('#search-input').addEventListener('compositionend', onSearchTyping);
 
   function pickResult(r) {
     const place = { ...r.place, id: newId() };
