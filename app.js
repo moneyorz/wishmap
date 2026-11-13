@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '5';
+  const APP_VERSION = '6';
   const KEY = 'wishmap.places.v1';
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -601,20 +601,29 @@
     const a = cleanAddress(q);
     const list = [];
     let m = a.match(/^(.+?[都道府県])(.+?[市区町村郡])([^\d]*)(\d+)?/);
-    if (m && /丁目|\d+-\d+|番/.test(a)) {
+    // 有「號、縣、巷」就是台灣地址，不走日本格式（避免「市民大道」的「道」被誤判）
+    if (m && /丁目|\d+-\d+|番/.test(a) && !/[號縣巷]/.test(a)) {
       const [, pref, muni, town, n] = m;
       if (town && n) list.push({ q: `${pref}${muni}${town}${n}丁目`, label: `${town}${n}丁目` });
       if (town) list.push({ q: `${pref}${muni}${town}`, label: town });
       list.push({ q: `${pref}${muni}`, label: muni });
       return list;
     }
-    m = a.match(/^(.{2,}?[縣市])(.+?[區鄉鎮市])?(.+?(?:大道|路|街)(?:[一二三四五六七八九十\d]+段)?)(.*)$/);
+    // 台灣格式：縣市 + 鄉鎮市區 + (村里) + (路街) + 門牌，村里和路街都可能沒有
+    m = a.match(/^(.{2,}?[縣市])(.+?[區鄉鎮市])?(.*)$/);
     if (m) {
-      const [, city, dist = '', road, rest] = m;
-      const lane = (rest.match(/\d+巷/) || [''])[0];
-      if (lane) list.push({ q: `${road}${lane} ${dist} ${city}`, label: `${road}${lane}` });
-      list.push({ q: `${road} ${dist} ${city}`, label: road });
+      const [, city, dist = '', rest] = m;
+      const village = (rest.match(/^([^\d路街]+?(?:村里|[村里]))/) || [])[1] || '';
+      const afterVillage = rest.slice(village.length).replace(/^\d+鄰/, '');
+      const rm = afterVillage.match(/^([^\d]+?(?:大道|路|街)(?:[一二三四五六七八九十\d]+段)?)(.*)$/);
+      if (rm) {
+        const lane = (rm[2].match(/^\d+巷/) || [''])[0];
+        if (lane) list.push({ q: `${rm[1]}${lane} ${dist} ${city}`, label: `${rm[1]}${lane}` });
+        list.push({ q: `${rm[1]} ${dist} ${city}`, label: rm[1] });
+      }
+      if (village) list.push({ q: `${village} ${dist} ${city}`, label: village });
       if (dist) list.push({ q: `${dist} ${city}`, label: dist });
+      list.push({ q: city, label: city });
     }
     return list;
   }
