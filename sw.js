@@ -1,6 +1,6 @@
 // 讓 APP 本體在沒有網路時也能開啟。
 // 有網路時一律抓最新版，抓不到才用上次存下來的版本。
-const CACHE = 'wishmap-v1';
+const CACHE = 'wishmap-v2';
 const SHELL = [
   './',
   'index.html',
@@ -31,7 +31,8 @@ self.addEventListener('fetch', (e) => {
   // 地圖圖磚與搜尋是外部服務，不經過這裡
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // no-cache：每次都向伺服器確認有沒有新版，避免手機拿到舊檔案
+    fetch(e.request, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

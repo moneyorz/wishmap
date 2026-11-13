@@ -1,6 +1,7 @@
 (() => {
   'use strict';
 
+  const APP_VERSION = '4';
   const KEY = 'wishmap.places.v1';
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -747,11 +748,12 @@
     }
   }
 
-  function onSearchTyping(e) {
-    // 注音／拼音還在選字時先不查，等選完字再查
-    if (e.isComposing) return;
+  function onSearchTyping() {
     cancelSuggest();
     const q = $('#search-input').value.trim();
+    // 注音還沒選成字時先不查。不依賴瀏覽器的「選字中」訊號，
+    // 因為有些手機鍵盤整段輸入都回報選字中，會導致建議永遠不出現
+    if (/[ㄅ-ㄯˉˊˇˋ˙]/.test(q)) return;
     // 空白、座標、網址、Plus Code 不需要建議，並清掉上一次的建議
     if (!q || parsePlusCode(q) || parsePasted(q) || /^[\d\s.,+-]+$/.test(q)) {
       $('#search-results').innerHTML = '';
@@ -896,6 +898,7 @@
   });
 
   // ---------- 啟動 ----------
+  $('#ver').textContent = `版本 ${APP_VERSION}`;
   refreshAll();
   fitAll();
   locate(false);
