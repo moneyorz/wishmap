@@ -330,6 +330,9 @@ label.field > * { margin-top: 5px; color: var(--text); font-size: 1rem; font-wei
   box-shadow: var(--shadow-sm);
 }
 #search-status { margin-top: 4px; font-size: .9rem; }
+.steps { margin: 6px 0 4px; padding-left: 20px; }
+.steps li { margin-bottom: 6px; }
+.steps b { color: var(--text); }
 
 /* ---------- 底部面板 ---------- */
 .sheet {

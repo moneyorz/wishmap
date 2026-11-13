@@ -477,7 +477,99 @@
     return { lat: Number(m[1]), lng: Number(m[2]), name };
   }
 
+  // ---------- Plus Code（Google Maps 每個地點都有，可直接換算成座標） ----------
+  const OLC = '23456789CFGHJMPQRVWX';
+  const OLC_RES = [20, 1, 0.05, 0.0025, 0.000125];
+
+  // code：去掉 + 號的完整代碼（10 或 11 碼），回傳該格子的中心點
+  function olcDecode(code) {
+    let lat = -90;
+    let lng = -180;
+    for (let i = 0; i < 5; i++) {
+      lat += OLC.indexOf(code[i * 2]) * OLC_RES[i];
+      lng += OLC.indexOf(code[i * 2 + 1]) * OLC_RES[i];
+    }
+    let latRes = OLC_RES[4];
+    let lngRes = OLC_RES[4];
+    if (code.length > 10) {
+      const d = OLC.indexOf(code[10]);
+      latRes /= 5;
+      lngRes /= 4;
+      lat += Math.floor(d / 4) * latRes;
+      lng += (d % 4) * lngRes;
+    }
+    return { lat: lat + latRes / 2, lng: lng + lngRes / 2 };
+  }
+
+  // 取得某個位置的完整代碼前 len 碼，用來補齊短代碼
+  function olcPrefix(lat, lng, len) {
+    let a = lat + 90;
+    let b = lng + 180;
+    let s = '';
+    for (let i = 0; i < len / 2; i++) {
+      const r = OLC_RES[i];
+      const da = Math.min(19, Math.floor(a / r));
+      const db = Math.min(19, Math.floor(b / r));
+      s += OLC[da] + OLC[db];
+      a -= da * r;
+      b -= db * r;
+    }
+    return s;
+  }
+
+  // 短代碼（例如 2HM7+X4）要靠附近的參考位置才能還原
+  function olcRecover(prefix, suffix, ref) {
+    const pad = 8 - prefix.length;
+    const pos = olcDecode(olcPrefix(ref.lat, ref.lng, pad) + prefix + suffix);
+    const res = OLC_RES[pad / 2 - 1];
+    if (ref.lat + res / 2 < pos.lat && pos.lat - res >= -90) pos.lat -= res;
+    else if (ref.lat - res / 2 > pos.lat && pos.lat + res <= 90) pos.lat += res;
+    if (ref.lng + res / 2 < pos.lng) pos.lng -= res;
+    else if (ref.lng - res / 2 > pos.lng) pos.lng += res;
+    return pos;
+  }
+
+  function parsePlusCode(q) {
+    const m = q.match(/^([2-9CFGHJMPQRVWX]{2,8})\+([2-9CFGHJMPQRVWX]{2,3})(?:[\s,，]+(.+))?$/i);
+    if (!m || m[1].length % 2) return null;
+    return { prefix: m[1].toUpperCase(), suffix: m[2].toUpperCase(), locality: (m[3] || '').trim() };
+  }
+
+  async function nominatim(path) {
+    // 免費搜尋服務規定每秒最多一次
+    const wait = 1100 - (Date.now() - lastSearchAt);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastSearchAt = Date.now();
+    const res = await fetch(`https://nominatim.openstreetmap.org/${path}&accept-language=zh-TW,zh,en`,
+      { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(String(res.status));
+    return res.json();
+  }
+
+  // 回傳候選位置 [{ pos, label }]，或回傳要顯示給使用者的錯誤訊息字串。
+  // 同名地區（例如世界上有很多個 Mountain View）會得到多個候選，交給使用者選。
+  async function locatePlusCode(plus) {
+    if (plus.prefix.length === 8) return [{ pos: olcDecode(plus.prefix + plus.suffix), label: '' }];
+    if (!plus.locality) {
+      if (me) return [{ pos: olcRecover(plus.prefix, plus.suffix, me), label: '' }];
+      return '這組 Plus Code 少了後面的地區名稱。請在 Google Maps 把整行一起複製，例如「2HM7+X4 大安區 台北市」。';
+    }
+    const hits = await nominatim(`search?format=jsonv2&limit=6&q=${encodeURIComponent(plus.locality)}`);
+    if (!hits.length) return `找不到「${plus.locality}」這個地區，請確認 Plus Code 後面的地區名稱有完整貼上。`;
+    const seen = new Set();
+    const list = [];
+    for (const h of hits) {
+      const pos = olcRecover(plus.prefix, plus.suffix, { lat: Number(h.lat), lng: Number(h.lon) });
+      const key = `${pos.lat.toFixed(4)},${pos.lng.toFixed(4)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({ pos, label: h.display_name });
+    }
+    return list;
+  }
+
   let lastSearchAt = 0;
+  let lastNameQuery = '';
   let results = [];
   $('#search-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -488,6 +580,45 @@
     const extra = $('#search-extra');
     $('#search-results').innerHTML = '';
     extra.hidden = true;
+
+    const plus = parsePlusCode(q);
+    if (plus) {
+      btn.disabled = true;
+      status.textContent = '正在換算位置…';
+      try {
+        const found = await locatePlusCode(plus);
+        if (typeof found === 'string') {
+          status.textContent = found;
+          return;
+        }
+        // 帶入剛才搜尋過的名稱，省得再打一次
+        results = found.map((f) => ({
+          place: normalize({ name: lastNameQuery, lat: f.pos.lat, lng: f.pos.lng }, true),
+          label: f.label,
+          fromCode: true,
+        }));
+        if (results.length === 1) {
+          status.textContent = '';
+          pickResult(results[0]);
+          return;
+        }
+        status.textContent = `有 ${results.length} 個同名的地區，請選擇正確的那一個：`;
+        $('#search-results').innerHTML = results.map((r, i) => `
+          <button type="button" class="result" data-i="${i}">
+            <span class="badge spot">${ico('pin', 24)}</span>
+            <span class="result-main">
+              <b>${esc(r.label.split(',')[0])}</b>
+              <span class="muted small">${esc(r.label)}</span>
+            </span>
+            <span class="chev">${ico('chev', 18)}</span>
+          </button>`).join('');
+      } catch {
+        status.textContent = '換算失敗，請確認網路連線後再試一次。';
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
 
     const pasted = parsePasted(q);
     if (pasted) {
@@ -508,6 +639,7 @@
 
     btn.disabled = true;
     status.textContent = '搜尋中…';
+    lastNameQuery = q;
     try {
       // 免費搜尋服務規定每秒最多一次
       const wait = 1100 - (Date.now() - lastSearchAt);
@@ -546,8 +678,19 @@
     const btn = e.target.closest('.result');
     if (!btn) return;
     const r = results[Number(btn.dataset.i)];
-    if (r) startDraft({ ...r.place, id: newId() });
+    if (r) pickResult(r);
   });
+
+  function pickResult(r) {
+    const place = { ...r.place, id: newId() };
+    startDraft(place);
+    if (r.fromCode) {
+      // Plus Code 只有位置，地址和國家城市要另外查
+      lastNameQuery = '';
+      $('#search-input').value = '';
+      reverseGeocode(place);
+    }
+  }
 
   $('#btn-manual').addEventListener('click', () => {
     showView('map');

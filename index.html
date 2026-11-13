@@ -55,12 +55,16 @@
         </form>
       </header>
       <div class="body">
-      <p class="muted small">名稱後面加上城市會更準，例如「一蘭拉麵 京都」。也可以直接貼上座標（例如 25.0339, 121.5645）。</p>
+      <p class="muted small">名稱後面加上城市會更準，例如「一蘭拉麵 京都」。也可以貼上 Google Maps 的 Plus Code（例如 2HM7+X4 大安區 台北市）。</p>
       <div id="search-status" class="muted"></div>
       <div id="search-results"></div>
       <div id="search-extra" class="card" hidden>
         <h2>找不到或不確定是哪一個？</h2>
-        <p class="muted small">先到 Google Maps 確認地點，長按該地點複製座標，再貼回上面的搜尋框。</p>
+        <ol class="steps muted small">
+          <li>按下面的按鈕，在 Google Maps 找到那個地點。</li>
+          <li>在地點資訊裡往下找 <b>Plus Code</b>（像「2HM7+X4 大安區 台北市」），點一下複製。</li>
+          <li>回到這裡，貼到上面的搜尋框再按搜尋。</li>
+        </ol>
         <a id="btn-google" class="btn wide" target="_blank" rel="noopener" href="#">在 Google Maps 找這個名稱</a>
         <button id="btn-manual" type="button" class="btn ghost wide">到地圖上長按手動新增</button>
       </div>
